@@ -1,13 +1,13 @@
 //! SVGA 1.x `movie.spec` JSON → [`Movie`]. Absent or mistyped members fall
 //! back to their defaults, the way the protobuf decoder treats absent fields.
-use super::{ArchiveFile, find_file, spec_shape};
+use super::{ArchiveFile, IMAGE_EXTENSION, spec_shape};
 use crate::{
     Limits, Movie, ValueKind,
     error::{Error, Result},
     movie::{Frame, ImageInfo, Layout, Params, Sprite, Transform},
 };
 use serde_json::Value;
-use std::cell::Cell;
+use std::{cell::Cell, collections::HashMap};
 
 /// Counts decoded elements, like the protobuf decoder does.
 pub(super) struct Budget(Cell<usize>);
@@ -45,6 +45,9 @@ pub(super) fn movie(
     files: &[ArchiveFile],
     limits: &Limits,
 ) -> Result<(Movie, Vec<(String, String)>)> {
+    if spec.len() > limits.max_spec_bytes {
+        return Err(Error::limit("svga_spec_exceeds_limit"));
+    }
     let root: Value =
         serde_json::from_slice(spec).map_err(|_| Error::malformed("svga_invalid_spec"))?;
     if !root.is_object() {
@@ -54,6 +57,7 @@ pub(super) fn movie(
     let header = root.get("movie").unwrap_or(&Value::Null);
     let view_box = header.get("viewBox").unwrap_or(&Value::Null);
     let names = names(&root);
+    let images = images(&names, files, &budget)?;
     let movie = Movie {
         version: text(&root, "ver"),
         params: Params {
@@ -62,7 +66,7 @@ pub(super) fn movie(
             fps: integer(header, "fps"),
             frames: integer(header, "frames"),
         },
-        images: images(&names, files),
+        images,
         sprites: items(&root, "sprites")
             .iter()
             .map(|value| sprite(value, &budget))
@@ -83,14 +87,27 @@ fn names(root: &Value) -> Vec<(String, String)> {
 }
 
 /// Each image described by the container file it names, when that exists.
-fn images(names: &[(String, String)], files: &[ArchiveFile]) -> Vec<ImageInfo> {
+fn images(
+    names: &[(String, String)],
+    files: &[ArchiveFile],
+    budget: &Budget,
+) -> Result<Vec<ImageInfo>> {
+    // Indexed once. Same rule as `find_file`: the exact name, then `.png`.
+    let mut index: HashMap<&str, &[u8]> = HashMap::new();
+    for file in files {
+        index.entry(&file.name).or_insert(&file.bytes);
+    }
     let describe = |(key, name): &(String, String)| {
-        let stored = find_file(files, name);
-        ImageInfo {
+        budget.spend()?;
+        let with_extension = format!("{name}{IMAGE_EXTENSION}");
+        let stored = index
+            .get(name.as_str())
+            .or(index.get(with_extension.as_str()));
+        Ok(ImageInfo {
             key: key.clone(),
-            byte_len: stored.map_or(name.len(), <[u8]>::len),
-            kind: stored.map_or(ValueKind::FileName, ValueKind::sniff),
-        }
+            byte_len: stored.map_or(name.len(), |bytes| bytes.len()),
+            kind: stored.map_or(ValueKind::FileName, |bytes| ValueKind::sniff(bytes)),
+        })
     };
     names.iter().map(describe).collect()
 }

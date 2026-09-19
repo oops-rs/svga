@@ -10,7 +10,7 @@ use std::{ops::Range, sync::Arc};
 const ENTRY_KEY: u32 = 1;
 const ENTRY_VALUE: u32 = 2;
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub(super) struct Part {
     pub number: u32,
     wire_type: u8,
@@ -26,6 +26,18 @@ struct Entry {
     key: Range<usize>,
     value: Range<usize>,
     numbers: Vec<u32>,
+}
+
+/// Summarized: the bytes themselves would flood any debug output.
+impl std::fmt::Debug for Part {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("Part")
+            .field("number", &self.number)
+            .field("wire_type", &self.wire_type)
+            .field("len", &self.raw.len())
+            .finish()
+    }
 }
 
 fn shifted(range: Range<usize>, base: usize) -> Range<usize> {

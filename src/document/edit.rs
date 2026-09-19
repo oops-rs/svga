@@ -4,7 +4,10 @@ use super::{
     Document, IMAGES,
     part::{self, Part},
 };
-use crate::error::{Error, Result};
+use crate::{
+    ValueKind,
+    error::{Error, Result},
+};
 
 const KEY_NOT_FOUND: Error = Error::invalid_edit("svga_image_key_not_found");
 const KEY_AMBIGUOUS: Error = Error::invalid_edit("svga_image_key_ambiguous");
@@ -53,6 +56,36 @@ impl Document {
             .filter(|(position, _)| *position != index)
             .map(|(_, part)| part.clone())
             .collect();
+        Ok(self.with_parts(parts))
+    }
+
+    /// Every entry whose value is a file name that `resolve` knows, with the
+    /// file's bytes embedded instead. One pass, by position, so repeated keys
+    /// are fine; refused once the payload would pass `max_bytes`.
+    pub(crate) fn with_embedded<'a>(
+        &self,
+        resolve: impl Fn(&str) -> Option<&'a [u8]>,
+        max_bytes: usize,
+    ) -> Result<Self> {
+        let mut total = 0usize;
+        let mut parts = Vec::with_capacity(self.parts.len());
+        for part in &self.parts {
+            let external = part
+                .image()
+                .filter(|image| image.kind() == ValueKind::FileName)
+                .and_then(|image| resolve(std::str::from_utf8(image.value()).ok()?));
+            let part = match external {
+                Some(bytes) => {
+                    Part::image_entry(&part::entry_with_value(part.field().payload, bytes)?)?
+                }
+                None => part.clone(),
+            };
+            total = total
+                .checked_add(part.raw().len())
+                .filter(|total| *total <= max_bytes)
+                .ok_or(Error::limit("svga_inflated_size_exceeds_limit"))?;
+            parts.push(part);
+        }
         Ok(self.with_parts(parts))
     }
 

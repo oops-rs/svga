@@ -192,6 +192,19 @@ fn repeated_messages_merge_and_repeated_scalars_keep_the_last() {
 }
 
 #[test]
+fn a_negative_zero_layout_and_lossy_keys_are_handled() {
+    let mut movie = full_movie();
+    movie.sprites[0].frames[1].layout.x = -0.0;
+    let decoded = Document::from_movie(&movie, &[]).unwrap().movie().unwrap();
+    assert!(decoded.sprites[0].frames[1].layout.x.is_sign_negative());
+    // Two different invalid keys read as the same lossy key: listed once.
+    let entry = |key: &[u8]| field(3, &[field(1, key), field(2, b"v")].concat());
+    let proto = [entry(&[0xff]), entry(&[0xfe])].concat();
+    let movie = Document::from_proto(proto).unwrap().movie().unwrap();
+    assert_eq!(movie.images.len(), 1);
+}
+
+#[test]
 fn invalid_nested_data_is_reported_not_guessed() {
     let shape = |kind: i32| field(4, &field(2, &field(5, &int32(1, kind))));
     let styles = |number, value| field(4, &field(2, &field(5, &field(10, &int32(number, value)))));

@@ -43,15 +43,26 @@ impl Document {
     }
 
     pub fn from_bytes_with(bytes: &[u8], limits: &Limits) -> Result<Self> {
-        Self::from_proto(container::inflate(bytes, limits)?)
+        Self::from_proto_with(container::inflate(bytes, limits)?, limits)
     }
 
     /// Read an uncompressed protobuf `MovieEntity`.
     pub fn from_proto(proto: impl Into<Arc<[u8]>>) -> Result<Self> {
+        Self::from_proto_with(proto, &Limits::default())
+    }
+
+    pub fn from_proto_with(proto: impl Into<Arc<[u8]>>, limits: &Limits) -> Result<Self> {
         let buffer: Arc<[u8]> = proto.into();
-        let parts = wire::fields(&buffer)
-            .map(|field| Part::from_source(&buffer, &field?))
-            .collect::<Result<Vec<_>>>()?;
+        if buffer.len() > limits.max_inflated_bytes {
+            return Err(Error::limit("svga_inflated_size_exceeds_limit"));
+        }
+        let mut parts = Vec::new();
+        for field in wire::fields(&buffer) {
+            if parts.len() >= limits.max_fields {
+                return Err(Error::limit("svga_too_many_fields"));
+            }
+            parts.push(Part::from_source(&buffer, &field?)?);
+        }
         Ok(Self { parts })
     }
 

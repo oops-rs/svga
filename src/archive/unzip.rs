@@ -54,12 +54,13 @@ pub(super) fn extract(bytes: &[u8], limits: &Limits) -> Result<Vec<ArchiveFile>>
     Ok(files)
 }
 
-/// `movie.binary` is the bare protobuf; a zlib-wrapped one is accepted too.
-pub(super) fn binary_document(bytes: &[u8], limits: &Limits) -> Result<Document> {
-    if container::is_zlib_header(bytes)
-        && let Ok(document) = Document::from_bytes_with(bytes, limits)
-    {
-        return Ok(document);
+/// `movie.binary` is the bare protobuf; a zlib-wrapped one is accepted too
+/// (a real movie starts with field 1, never with a zlib header). Inflating
+/// draws on what the `extracted` container files left of the budget.
+pub(super) fn binary_document(bytes: &[u8], limits: &Limits, extracted: usize) -> Result<Document> {
+    if !container::is_zlib_header(bytes) {
+        return Document::from_proto_with(bytes, limits);
     }
-    Document::from_proto(bytes)
+    let remaining = limits.max_inflated_bytes.saturating_sub(extracted);
+    Document::from_bytes_with(bytes, &limits.with_max_inflated_bytes(remaining))
 }

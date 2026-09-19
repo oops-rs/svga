@@ -85,7 +85,8 @@ Every error has an `ErrorKind` (`Malformed`, `Unsupported`, `LimitExceeded`,
 `svga_trailing_bytes`. Match on those, not on the display text.
 
 Readers take optional `Limits`. The defaults accept files up to 64 MiB that
-inflate to at most 256 MiB, 4096 zip entries, and 4 million decoded elements:
+inflate to at most 256 MiB, 250 000 top-level fields, 4096 zip entries, a
+16 MiB SVGA 1.x spec, and 4 million decoded elements:
 
 ```rust
 let limits = svga::Limits::default().with_max_inflated_bytes(32 * 1024 * 1024);

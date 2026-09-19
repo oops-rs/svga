@@ -29,6 +29,7 @@ fn an_unedited_document_re_emits_its_exact_payload() {
     let document = Document::from_bytes(&pack(&proto)).unwrap();
     assert_eq!(document.to_proto(), proto);
     assert_eq!(document.proto_len(), proto.len());
+    assert!(format!("{document:?}").len() < 1024);
     assert!(document.has_unknown_fields());
     for compression in [Compression::Fast, Compression::Default, Compression::Best] {
         let bytes = document.to_bytes(compression).unwrap();
@@ -100,6 +101,8 @@ fn map_entries_follow_protobuf_semantics() {
     assert_eq!(entries[0].field_numbers(), [1, 2, 1, 2]);
     assert!(!entries[0].is_canonical());
     assert_eq!((entries[1].key(), entries[1].value()), (Some(""), &[][..]));
+    // An empty value names no file.
+    assert_eq!(entries[1].kind(), ValueKind::Unknown);
     // The last entry for a key wins.
     assert_eq!(document.image("key"), Some(b"three".as_slice()));
     let invalid = Document::from_proto(
@@ -185,6 +188,23 @@ fn limits_are_enforced_and_configurable() {
     assert_eq!(
         code(Document::from_bytes_with(&pack(&proto()), &tiny)),
         (ErrorKind::LimitExceeded, "svga_input_exceeds_limit")
+    );
+    // Tiny fields cost far more memory than their two bytes; they are counted.
+    let many = [0x30, 0x00].repeat(100);
+    let fields = Limits::default().with_max_fields(99);
+    assert_eq!(
+        code(Document::from_proto_with(many.clone(), &fields)),
+        (ErrorKind::LimitExceeded, "svga_too_many_fields")
+    );
+    assert!(Document::from_proto_with(many.clone(), &fields.with_max_fields(100)).is_ok());
+    let bytes = Limits::default().with_max_inflated_bytes(199);
+    assert_eq!(
+        code(Document::from_proto_with(many.clone(), &bytes)),
+        (ErrorKind::LimitExceeded, "svga_inflated_size_exceeds_limit")
+    );
+    assert_eq!(
+        code(Document::from_bytes_with(&pack(&many), &fields)),
+        (ErrorKind::LimitExceeded, "svga_too_many_fields")
     );
     assert_eq!(
         code(Document::from_bytes(b"PK\x03\x04zip")),

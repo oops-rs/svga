@@ -1,5 +1,7 @@
 //! Protobuf → [`Movie`]. Unknown fields are skipped, a known field with the
 //! wrong wire type is malformed, and repeated scalars follow last-one-wins.
+//! Repeated params, layouts and transforms merge as protobuf says; a repeated
+//! shape argument or style message replaces the earlier one.
 use super::{Audio, Frame, ImageInfo, Layout, Movie, Params, Sprite, Transform, decode_shape};
 use crate::{
     Document, Limits,
@@ -73,7 +75,8 @@ pub(super) fn pushed<T>(mut items: Vec<T>, item: T) -> Vec<T> {
 /// Distinct keys in first-seen order, each described by its winning value.
 /// Entries count against the element budget like everything else decoded.
 fn images(document: &Document, budget: &Budget) -> Result<Vec<ImageInfo>> {
-    let mut slots: HashMap<&[u8], usize> = HashMap::new();
+    // Keyed by the exposed (lossy) key, so `Movie::images` never repeats one.
+    let mut slots: HashMap<String, usize> = HashMap::new();
     let mut infos: Vec<ImageInfo> = Vec::new();
     for image in document.images() {
         budget.spend()?;
@@ -82,7 +85,7 @@ fn images(document: &Document, budget: &Budget) -> Result<Vec<ImageInfo>> {
             byte_len: image.value().len(),
             kind: image.kind(),
         };
-        let slot = *slots.entry(image.key_bytes()).or_insert(infos.len());
+        let slot = *slots.entry(info.key.clone()).or_insert(infos.len());
         match infos.get_mut(slot) {
             Some(seen) => *seen = info,
             None => infos.push(info),

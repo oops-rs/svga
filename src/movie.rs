@@ -22,8 +22,8 @@ pub struct Movie {
     /// As stored, for example `2.1.0` or `1.1.0`.
     pub version: String,
     pub params: Params,
-    /// One entry per distinct key, in first-seen order. The bytes stay in the
-    /// document or archive.
+    /// One entry per distinct key: in first-seen order for SVGA 2.x, sorted by
+    /// key for 1.x. The bytes stay in the document or archive.
     pub images: Vec<ImageInfo>,
     pub sprites: Vec<Sprite>,
     pub audios: Vec<Audio>,

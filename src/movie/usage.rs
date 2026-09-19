@@ -67,7 +67,8 @@ impl Movie {
             .collect()
     }
 
-    /// Referenced keys with no stored image.
+    /// Referenced keys with no stored image. Sprites that only draw vector
+    /// shapes usually name a key without an image, so this is not an error list.
     pub fn missing_image_keys(&self) -> Vec<&str> {
         let stored: BTreeSet<&str> = self.images.iter().map(|image| image.key.as_str()).collect();
         self.referenced_keys()

@@ -151,6 +151,49 @@ fn zipped_2x_resolves_images_stored_next_to_the_movie() {
 }
 
 #[test]
+fn embedding_handles_repeated_keys_and_is_bounded() {
+    // Two entries share a key and a file: readable, so it must convert too.
+    let images = [("a", b"big".to_vec()), ("a", b"big".to_vec())];
+    let proto = movie_with(&images, &[]);
+    let files = [("movie.binary", &proto[..]), ("big.png", &png(1)[..])];
+    let bytes = archive(&files, CompressionMethod::Stored);
+    let animation = Animation::from_bytes(&bytes).unwrap();
+    let embedded = [("a", png(1)), ("a", png(1))];
+    let document = animation.to_document().unwrap();
+    assert_eq!(document.to_proto(), movie_with(&embedded, &[]));
+    // Many keys naming one file must not multiply past the limit.
+    let room = Limits::default().with_max_inflated_bytes(proto.len() + 72);
+    let animation = Animation::from_bytes_with(&bytes, &room).unwrap();
+    let error = animation.to_document().unwrap_err();
+    assert_eq!(error.code(), "svga_inflated_size_exceeds_limit");
+    let legacy = Animation::from_bytes_with(
+        &legacy(),
+        &Limits::default().with_max_inflated_bytes(SPEC.len() + 77),
+    );
+    assert!(legacy.unwrap().to_document().is_ok());
+}
+
+#[test]
+fn a_zlib_wrapped_movie_binary_reports_its_own_errors() {
+    let proto = proto();
+    let trailing = [pack(&proto), vec![0]].concat();
+    let bytes = archive(
+        &[("movie.binary", &trailing[..])],
+        CompressionMethod::Stored,
+    );
+    let expected = (ErrorKind::Malformed, "svga_trailing_bytes");
+    assert_eq!(code(Animation::from_bytes(&bytes)), expected);
+    // Inflating shares the budget with the extracted files.
+    let packed = pack(&proto);
+    let bytes = archive(&[("movie.binary", &packed[..])], CompressionMethod::Stored);
+    let tight = Limits::default().with_max_inflated_bytes(packed.len() + proto.len() - 1);
+    let expected = (ErrorKind::LimitExceeded, "svga_inflated_size_exceeds_limit");
+    assert_eq!(code(Animation::from_bytes_with(&bytes, &tight)), expected);
+    let enough = tight.with_max_inflated_bytes(packed.len() + proto.len());
+    assert!(Animation::from_bytes_with(&bytes, &enough).is_ok());
+}
+
+#[test]
 fn a_plain_2x_file_is_read_through_the_same_entry_point() {
     let animation = Animation::from_bytes(&pack(&proto())).unwrap();
     assert_eq!(animation.format(), Format::Zlib);
@@ -206,12 +249,17 @@ fn archive_limits_are_enforced() {
         (exceeded, "svga_inflated_size_exceeds_limit")
     );
     assert_eq!(
+        limited(Limits::default().with_max_spec_bytes(SPEC.len() - 1)),
+        (exceeded, "svga_spec_exceeds_limit")
+    );
+    assert_eq!(
         limited(Limits::default().with_max_elements(3)),
         (exceeded, "svga_too_many_elements")
     );
     let exact = Limits::default()
         .with_max_archive_entries(4)
         .with_max_inflated_bytes(SPEC.len() + 77)
-        .with_max_elements(7);
+        .with_max_spec_bytes(SPEC.len())
+        .with_max_elements(10);
     assert!(Animation::from_bytes_with(&bytes, &exact).is_ok());
 }

@@ -14,6 +14,13 @@ pub struct Limits {
     pub max_inflated_bytes: usize,
     /// Most entries read from a zip container. Default 4096.
     pub max_archive_entries: usize,
+    /// Most top-level protobuf fields kept by a
+    /// [`Document`](crate::Document). Each costs far more memory than the two
+    /// bytes it can be stored in. Default 250 000.
+    pub max_fields: usize,
+    /// Largest accepted SVGA 1.x `movie.spec`; parsed JSON takes many times
+    /// its size. Default 16 MiB.
+    pub max_spec_bytes: usize,
     /// Most images, sprites, frames, shapes and audios decoded into a
     /// [`Movie`](crate::Movie). A frame takes far more memory decoded than
     /// encoded, so this bounds the typed view. Default 4 million.
@@ -26,6 +33,8 @@ impl Default for Limits {
             max_input_bytes: 64 * MIB,
             max_inflated_bytes: 256 * MIB,
             max_archive_entries: 4096,
+            max_fields: 250_000,
+            max_spec_bytes: 16 * MIB,
             max_elements: 4_000_000,
         }
     }
@@ -52,6 +61,19 @@ impl Limits {
     pub fn with_max_archive_entries(self, max_archive_entries: usize) -> Self {
         Self {
             max_archive_entries,
+            ..self
+        }
+    }
+
+    #[must_use]
+    pub fn with_max_fields(self, max_fields: usize) -> Self {
+        Self { max_fields, ..self }
+    }
+
+    #[must_use]
+    pub fn with_max_spec_bytes(self, max_spec_bytes: usize) -> Self {
+        Self {
+            max_spec_bytes,
             ..self
         }
     }

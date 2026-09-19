@@ -43,7 +43,8 @@ fn is_mp3(value: &[u8]) -> bool {
 }
 
 fn is_file_name(value: &[u8]) -> bool {
-    value.len() <= MAX_FILE_NAME_BYTES
+    !value.is_empty()
+        && value.len() <= MAX_FILE_NAME_BYTES
         && std::str::from_utf8(value).is_ok_and(|name| !name.chars().any(char::is_control))
 }
 

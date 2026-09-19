@@ -48,6 +48,7 @@ pub struct Animation {
     files: Vec<ArchiveFile>,
     /// SVGA 1.x only: image key → name of the container file holding it.
     names: Vec<(String, String)>,
+    limits: Limits,
 }
 
 impl Animation {
@@ -66,6 +67,7 @@ impl Animation {
             document: Some(document),
             files: Vec::new(),
             names: Vec::new(),
+            limits: *limits,
         })
     }
 
@@ -79,13 +81,15 @@ impl Animation {
         let files = unzip::extract(bytes, limits)?;
         let find = |name: &str| files.iter().find(|file| file.name == name);
         if let Some(binary) = find(unzip::MOVIE_BINARY) {
-            let document = unzip::binary_document(&binary.bytes, limits)?;
+            let extracted: usize = files.iter().map(|file| file.bytes.len()).sum();
+            let document = unzip::binary_document(&binary.bytes, limits, extracted)?;
             return Ok(Self {
                 format: Format::ZipBinary,
                 movie: document.movie_with(limits)?,
                 document: Some(document),
                 files,
                 names: Vec::new(),
+                limits: *limits,
             });
         }
         let spec = find(unzip::MOVIE_SPEC).ok_or(Error::malformed("svga_zip_without_movie"))?;
@@ -96,6 +100,7 @@ impl Animation {
             document: None,
             files,
             names,
+            limits: *limits,
         })
     }
 
@@ -137,7 +142,11 @@ impl Animation {
     /// embedded, and SVGA 1.x is converted. Images whose file is missing stay
     /// as they are (2.x) or are left out (1.x). Converting 1.x re-encodes the
     /// movie from the typed view; 2.x input keeps every other byte.
+    ///
+    /// Many keys may name one file, so the result can be far larger than the
+    /// input; it is held to the `max_inflated_bytes` this was read with.
     pub fn to_document(&self) -> Result<Document> {
+        let max_bytes = self.limits.max_inflated_bytes;
         let Some(document) = &self.document else {
             let images: Vec<(&str, &[u8])> = self
                 .movie
@@ -145,28 +154,22 @@ impl Animation {
                 .iter()
                 .filter_map(|image| Some((image.key.as_str(), self.image(&image.key)?)))
                 .collect();
+            let embedded = images
+                .iter()
+                .try_fold(0usize, |total, (_, bytes)| total.checked_add(bytes.len()));
+            if embedded.is_none_or(|total| total > max_bytes) {
+                return Err(Error::limit("svga_inflated_size_exceeds_limit"));
+            }
             return Document::from_movie(&self.movie, &images);
         };
-        let external: Vec<(&str, &[u8])> = document
-            .images()
-            .filter(|image| image.kind() == ValueKind::FileName)
-            .filter_map(|image| {
-                let name = std::str::from_utf8(image.value()).ok()?;
-                Some((image.key()?, self.file(name)?))
-            })
-            .collect();
-        external
-            .iter()
-            .try_fold(document.clone(), |document, (key, bytes)| {
-                document.replace_image(key, bytes)
-            })
+        document.with_embedded(|name| self.file(name), max_bytes)
     }
 }
 
 pub(crate) fn find_file<'a>(files: &'a [ArchiveFile], name: &str) -> Option<&'a [u8]> {
     let with_extension = format!("{name}{IMAGE_EXTENSION}");
-    files
-        .iter()
-        .find(|file| file.name == name || file.name == with_extension)
+    let named = |wanted: &str| files.iter().find(|file| file.name == wanted);
+    named(name)
+        .or_else(|| named(&with_extension))
         .map(|file| file.bytes.as_slice())
 }

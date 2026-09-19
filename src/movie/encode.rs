@@ -92,16 +92,18 @@ fn sprite(sprite: &Sprite) -> Vec<u8> {
 }
 
 fn frame(frame: &Frame) -> Vec<u8> {
-    let layout = if frame.layout == Layout::default() {
+    let Layout {
+        x,
+        y,
+        width,
+        height,
+    } = frame.layout;
+    // Left out only when every component is +0.0, bit for bit.
+    let layout = floats(&[x, y, width, height]);
+    let layout = if layout.is_empty() {
         Vec::new()
     } else {
-        let Layout {
-            x,
-            y,
-            width,
-            height,
-        } = frame.layout;
-        message(2, &floats(&[x, y, width, height]))
+        message(2, &layout)
     };
     [
         float(1, frame.alpha),
