@@ -120,104 +120,72 @@ fn params(initial: Params, payload: &[u8]) -> Result<Params> {
 
 fn sprite(payload: &[u8], budget: &Budget) -> Result<Sprite> {
     budget.spend()?;
-    fold(payload, Sprite::default(), |sprite, field| {
-        Ok(match field.number {
-            1 => Sprite {
-                image_key: field.str()?.to_owned(),
-                ..sprite
-            },
-            2 => {
-                let frame = frame(field.bytes()?, budget)?;
-                Sprite {
-                    frames: pushed(sprite.frames, frame),
-                    ..sprite
-                }
-            }
-            3 => Sprite {
-                matte_key: field.str()?.to_owned(),
-                ..sprite
-            },
-            _ => sprite,
-        })
-    })
+    // These decoders run once per frame of every sprite, so they fill one
+    // local value in place rather than rebuilding it for each field.
+    let mut sprite = Sprite::default();
+    for field in wire::fields(payload) {
+        let field = field?;
+        match field.number {
+            1 => sprite.image_key = field.str()?.to_owned(),
+            2 => sprite.frames.push(frame(field.bytes()?, budget)?),
+            3 => sprite.matte_key = field.str()?.to_owned(),
+            _ => {}
+        }
+    }
+    Ok(sprite)
 }
 
 fn frame(payload: &[u8], budget: &Budget) -> Result<Frame> {
     budget.spend()?;
-    fold(payload, Frame::default(), |frame, field| {
-        Ok(match field.number {
-            1 => Frame {
-                alpha: field.f32()?,
-                ..frame
-            },
-            2 => Frame {
-                layout: layout(frame.layout, field.bytes()?)?,
-                ..frame
-            },
-            3 => Frame {
-                transform: Some(transform(frame.transform, field.bytes()?)?),
-                ..frame
-            },
-            4 => Frame {
-                clip_path: field.str()?.to_owned(),
-                ..frame
-            },
-            5 => {
-                let shape = decode_shape::shape(field.bytes()?, budget)?;
-                Frame {
-                    shapes: pushed(frame.shapes, shape),
-                    ..frame
-                }
-            }
-            _ => frame,
-        })
-    })
+    let mut frame = Frame::default();
+    for field in wire::fields(payload) {
+        let field = field?;
+        match field.number {
+            1 => frame.alpha = field.f32()?,
+            2 => frame.layout = layout(frame.layout, field.bytes()?)?,
+            3 => frame.transform = Some(transform(frame.transform, field.bytes()?)?),
+            4 => frame.clip_path = field.str()?.to_owned(),
+            5 => frame
+                .shapes
+                .push(decode_shape::shape(field.bytes()?, budget)?),
+            _ => {}
+        }
+    }
+    Ok(frame)
 }
 
 fn layout(initial: Layout, payload: &[u8]) -> Result<Layout> {
-    fold(payload, initial, |layout, field| {
-        if !(1..=4).contains(&field.number) {
-            return Ok(layout);
+    let mut layout = initial;
+    for field in wire::fields(payload) {
+        let field = field?;
+        match field.number {
+            1 => layout.x = field.f32()?,
+            2 => layout.y = field.f32()?,
+            3 => layout.width = field.f32()?,
+            4 => layout.height = field.f32()?,
+            _ => {}
         }
-        let value = field.f32()?;
-        Ok(match field.number {
-            1 => Layout { x: value, ..layout },
-            2 => Layout { y: value, ..layout },
-            3 => Layout {
-                width: value,
-                ..layout
-            },
-            _ => Layout {
-                height: value,
-                ..layout
-            },
-        })
-    })
+    }
+    Ok(layout)
 }
 
 /// A transform that is present starts from all zeros, not from the identity:
 /// protobuf omits zero-valued floats, so `{a: 1, d: 1}` stores only two fields.
 pub(super) fn transform(initial: Option<Transform>, payload: &[u8]) -> Result<Transform> {
-    fold(payload, initial.unwrap_or_default(), |matrix, field| {
-        if !(1..=6).contains(&field.number) {
-            return Ok(matrix);
+    let mut matrix = initial.unwrap_or_default();
+    for field in wire::fields(payload) {
+        let field = field?;
+        match field.number {
+            1 => matrix.a = field.f32()?,
+            2 => matrix.b = field.f32()?,
+            3 => matrix.c = field.f32()?,
+            4 => matrix.d = field.f32()?,
+            5 => matrix.tx = field.f32()?,
+            6 => matrix.ty = field.f32()?,
+            _ => {}
         }
-        let value = field.f32()?;
-        Ok(match field.number {
-            1 => Transform { a: value, ..matrix },
-            2 => Transform { b: value, ..matrix },
-            3 => Transform { c: value, ..matrix },
-            4 => Transform { d: value, ..matrix },
-            5 => Transform {
-                tx: value,
-                ..matrix
-            },
-            _ => Transform {
-                ty: value,
-                ..matrix
-            },
-        })
-    })
+    }
+    Ok(matrix)
 }
 
 fn audio(payload: &[u8], budget: &Budget) -> Result<Audio> {

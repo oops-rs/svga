@@ -69,7 +69,18 @@ impl<'a> Field<'a> {
     }
 }
 
+#[inline]
 fn varint(bytes: &[u8], at: usize) -> Result<(u64, usize)> {
+    // Tags and most lengths fit one byte; skip the loop for those.
+    if let Some(&byte) = bytes.get(at)
+        && byte < 0x80
+    {
+        return Ok((u64::from(byte), at + 1));
+    }
+    varint_slow(bytes, at)
+}
+
+fn varint_slow(bytes: &[u8], at: usize) -> Result<(u64, usize)> {
     let mut value = 0u64;
     for index in 0..MAX_VARINT_BYTES {
         let position = at.checked_add(index).ok_or(TRUNCATED_VARINT)?;
@@ -105,6 +116,7 @@ pub fn walk(bytes: &[u8]) -> Result<Vec<Field<'_>>> {
 }
 
 impl<'a> Fields<'a> {
+    #[inline]
     fn read(&self) -> Result<(Field<'a>, usize)> {
         let (bytes, offset) = (self.bytes, self.offset);
         let (tag, after_tag) = varint(bytes, offset)?;
@@ -138,6 +150,7 @@ impl<'a> Fields<'a> {
 impl<'a> Iterator for Fields<'a> {
     type Item = Result<Field<'a>>;
 
+    #[inline]
     fn next(&mut self) -> Option<Self::Item> {
         if self.offset >= self.bytes.len() {
             return None;

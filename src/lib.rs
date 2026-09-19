@@ -26,6 +26,8 @@
 //! ```
 //!
 //! [SVGA]: https://github.com/svga/SVGA-Format
+#![forbid(unsafe_code)]
+
 mod archive;
 mod container;
 mod document;
