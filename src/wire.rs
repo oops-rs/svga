@@ -2,6 +2,10 @@
 //!
 //! Walking never interprets a field: each one keeps its original bytes, which
 //! is what lets untouched data be copied verbatim.
+mod values;
+
+pub(crate) use values::{Item, values};
+
 use crate::error::{Error, Result};
 
 pub const VARINT: u8 = 0;

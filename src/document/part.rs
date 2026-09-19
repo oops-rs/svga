@@ -5,16 +5,35 @@ use crate::{
     error::Result,
     wire::{self, Field, LENGTH_DELIMITED},
 };
-use std::{ops::Range, sync::Arc};
+use std::{ops::Deref, ops::Range, sync::Arc};
 
 const ENTRY_KEY: u32 = 1;
 const ENTRY_VALUE: u32 = 2;
+
+/// Shared bytes that parts point into. An inflated payload arrives as a `Vec`
+/// and is kept as one, because turning it into `Arc<[u8]>` would copy it.
+#[derive(Clone)]
+pub(super) enum Buffer {
+    Slice(Arc<[u8]>),
+    Vec(Arc<Vec<u8>>),
+}
+
+impl Deref for Buffer {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Slice(bytes) => bytes,
+            Self::Vec(bytes) => bytes,
+        }
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct Part {
     pub number: u32,
     wire_type: u8,
-    buffer: Arc<[u8]>,
+    buffer: Buffer,
     raw: Range<usize>,
     payload: Range<usize>,
     entry: Option<Entry>,
@@ -46,7 +65,7 @@ fn shifted(range: Range<usize>, base: usize) -> Range<usize> {
 
 impl Part {
     /// A part viewing `field`, which must come from walking `buffer`.
-    pub fn from_source(buffer: &Arc<[u8]>, field: &Field<'_>) -> Result<Self> {
+    pub fn from_source(buffer: &Buffer, field: &Field<'_>) -> Result<Self> {
         if (VERSION..=AUDIOS).contains(&field.number) {
             expect_length_delimited(field)?;
         }
@@ -56,7 +75,7 @@ impl Part {
         Ok(Self {
             number: field.number,
             wire_type: field.wire_type,
-            buffer: Arc::clone(buffer),
+            buffer: buffer.clone(),
             raw: field.offset..field.offset + field.raw.len(),
             payload: field.payload_range(),
             entry,
@@ -65,7 +84,7 @@ impl Part {
 
     /// A new `images` entry holding `entry_payload`.
     pub fn image_entry(entry_payload: &[u8]) -> Result<Self> {
-        let buffer: Arc<[u8]> = wire::length_delimited(IMAGES, entry_payload).into();
+        let buffer = Buffer::Vec(Arc::new(wire::length_delimited(IMAGES, entry_payload)));
         let field = wire::fields(&buffer)
             .next()
             .transpose()?

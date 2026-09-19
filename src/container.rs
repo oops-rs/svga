@@ -3,9 +3,20 @@ use crate::{
     Limits,
     error::{Error, Result},
 };
-use std::io::{Read, Write};
+use fdeflate::Decompressor;
 
 const ZIP_MAGIC: &[u8] = b"PK";
+/// The payload is mostly PNG data, which barely compresses: twice the input
+/// almost always holds the output without a second allocation.
+const OUTPUT_GUESS_FACTOR: usize = 2;
+const MIN_OUTPUT_BYTES: usize = 4096;
+/// More than the decoder can prefetch (its bit buffer holds 8 bytes).
+const TAIL_BYTES: usize = 16;
+const CORRUPT_STREAM: Error = Error::malformed("svga_corrupt_zlib_stream");
+const TOO_LARGE: Error = Error::limit("svga_inflated_size_exceeds_limit");
+const LEVEL_FAST: u8 = 1;
+const LEVEL_DEFAULT: u8 = 6;
+const LEVEL_BEST: u8 = 9;
 
 /// How a file wraps its movie, judged from the leading bytes only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -61,26 +72,97 @@ pub(crate) fn inflate(bytes: &[u8], limits: &Limits) -> Result<Vec<u8>> {
         Some(Container::Zip) => return Err(Error::unsupported("svga_zip_container")),
         None => return Err(Error::malformed("svga_not_zlib")),
     }
-    // `&[u8]` is already buffered, so the decoder never reads past the stream
-    // end and `total_in` is the exact stream length.
-    let mut decoder = flate2::bufread::ZlibDecoder::new(bytes);
-    let mut inflated = Vec::new();
-    let limit = limits.max_inflated_bytes;
-    let cap = u64::try_from(limit).unwrap_or(u64::MAX).saturating_add(1);
-    decoder
-        .by_ref()
-        .take(cap)
-        .read_to_end(&mut inflated)
-        .map_err(|_| Error::malformed("svga_corrupt_zlib_stream"))?;
-    if inflated.len() > limit {
-        return Err(Error::limit("svga_inflated_size_exceeds_limit"));
-    }
-    if decoder.total_in() != bytes.len() as u64 {
-        return Err(Error::malformed("svga_trailing_bytes"));
-    }
-    Ok(inflated)
+    inflate_stream(bytes, limits.max_inflated_bytes)
 }
 
+/// Output being inflated into: one buffer, grown on demand up to `cap`.
+struct Sink {
+    bytes: Vec<u8>,
+    produced: usize,
+    cap: usize,
+}
+
+impl Sink {
+    /// Feed all of `input`, then keep going until the decoder has nothing
+    /// more to write, so that `is_done` reflects exactly the bytes given.
+    fn pump(&mut self, decoder: &mut Decompressor, input: &[u8]) -> Result<()> {
+        let mut rest = input;
+        loop {
+            let (read, written) = decoder
+                .read(rest, &mut self.bytes, self.produced, false)
+                .map_err(|_| CORRUPT_STREAM)?;
+            rest = rest.get(read..).ok_or(CORRUPT_STREAM)?;
+            self.produced = self.produced.checked_add(written).ok_or(CORRUPT_STREAM)?;
+            if decoder.is_done() {
+                // Whatever is left of `input` lies after the stream.
+                return Ok(());
+            }
+            if self.produced >= self.bytes.len() {
+                if self.bytes.len() >= self.cap {
+                    return Err(TOO_LARGE);
+                }
+                let grown = self.bytes.len().saturating_mul(2).min(self.cap);
+                self.bytes.resize(grown, 0);
+            } else if read == 0 && written == 0 {
+                // Settled. Input it refuses with room to write is a bad stream.
+                return if rest.is_empty() {
+                    Ok(())
+                } else {
+                    Err(CORRUPT_STREAM)
+                };
+            }
+        }
+    }
+}
+
+/// The inflater is driven directly rather than through a `Read` adapter: the
+/// whole input is in memory, so it writes straight into one output buffer.
+/// The Adler-32 checksum is verified.
+///
+/// The decoder prefetches up to a bit buffer of input, so the byte count it
+/// reports cannot tell a stream that ends exactly at the end of the file from
+/// one followed by a few stray bytes. The last [`TAIL_BYTES`] are therefore
+/// fed one at a time: a decoder cannot finish on a byte it has not been given,
+/// so finishing before the last byte means trailing data.
+fn inflate_stream(bytes: &[u8], limit: usize) -> Result<Vec<u8>> {
+    // One byte past the limit is enough to tell "too large" from "fits".
+    let cap = limit.saturating_add(1);
+    let guess = bytes.len().saturating_mul(OUTPUT_GUESS_FACTOR);
+    let mut sink = Sink {
+        bytes: vec![0; guess.clamp(MIN_OUTPUT_BYTES.min(cap), cap)],
+        produced: 0,
+        cap,
+    };
+    let mut decoder = Decompressor::new();
+    let (head, tail) = bytes.split_at(bytes.len().saturating_sub(TAIL_BYTES));
+    sink.pump(&mut decoder, head)?;
+    let mut given = head.len();
+    for byte in tail {
+        if decoder.is_done() {
+            break;
+        }
+        sink.pump(&mut decoder, std::slice::from_ref(byte))?;
+        given += 1;
+    }
+    if !decoder.is_done() {
+        return Err(CORRUPT_STREAM);
+    }
+    if sink.produced > limit {
+        return Err(TOO_LARGE);
+    }
+    if given != bytes.len() {
+        return Err(Error::malformed("svga_trailing_bytes"));
+    }
+    let Sink {
+        mut bytes,
+        produced,
+        ..
+    } = sink;
+    bytes.truncate(produced);
+    Ok(bytes)
+}
+
+#[cfg(feature = "libdeflate")]
 const DEFLATE_FAILED: Error = Error::new(crate::ErrorKind::Encode, "svga_deflate_failed");
 
 /// One zlib stream holding `bytes`.
@@ -90,13 +172,11 @@ pub(crate) fn deflate(bytes: &[u8], compression: Compression) -> Result<Vec<u8>>
         return deflate_max(bytes);
     }
     let level = match compression {
-        Compression::Fast => flate2::Compression::fast(),
-        Compression::Default => flate2::Compression::default(),
-        Compression::Best => flate2::Compression::best(),
+        Compression::Fast => LEVEL_FAST,
+        Compression::Default => LEVEL_DEFAULT,
+        Compression::Best => LEVEL_BEST,
     };
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), level);
-    encoder.write_all(bytes).map_err(|_| DEFLATE_FAILED)?;
-    encoder.finish().map_err(|_| DEFLATE_FAILED)
+    Ok(miniz_oxide::deflate::compress_to_vec_zlib(bytes, level))
 }
 
 #[cfg(feature = "libdeflate")]

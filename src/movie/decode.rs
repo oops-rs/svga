@@ -7,14 +7,21 @@ use crate::{
     Document, Limits,
     document::{AUDIOS, PARAMS, SPRITES, VERSION},
     error::{Error, Result},
-    wire::{self, Field},
+    wire::{self, Item},
 };
 use std::{cell::Cell, collections::HashMap};
+
+/// A frame field is at least a tag and a length.
+const MIN_FRAME_BYTES: usize = 2;
 
 /// Counts decoded elements so a small file cannot expand without bound.
 pub(super) struct Budget(Cell<usize>);
 
 impl Budget {
+    fn remaining(&self) -> usize {
+        self.0.get()
+    }
+
     pub fn spend(&self) -> Result<()> {
         let left = self.0.get().checked_sub(1);
         self.0
@@ -27,9 +34,9 @@ impl Budget {
 pub(super) fn fold<'a, T>(
     payload: &'a [u8],
     initial: T,
-    mut apply: impl FnMut(T, Field<'a>) -> Result<T>,
+    mut apply: impl FnMut(T, Item<'a>) -> Result<T>,
 ) -> Result<T> {
-    wire::fields(payload).try_fold(initial, |value, field| apply(value, field?))
+    wire::values(payload).try_fold(initial, |value, field| apply(value, field?))
 }
 
 pub(crate) fn movie(document: &Document, limits: &Limits) -> Result<Movie> {
@@ -49,7 +56,7 @@ pub(crate) fn movie(document: &Document, limits: &Limits) -> Result<Movie> {
                 ..movie
             },
             SPRITES => {
-                let sprite = sprite(field.bytes()?, &budget)?;
+                let sprite = sprite(field.bytes()?, movie.params.frames, &budget)?;
                 Movie {
                     sprites: pushed(movie.sprites, sprite),
                     ..movie
@@ -118,16 +125,33 @@ fn params(initial: Params, payload: &[u8]) -> Result<Params> {
     })
 }
 
-fn sprite(payload: &[u8], budget: &Budget) -> Result<Sprite> {
+/// `expected_frames` is the movie's frame count, which is how many frames a
+/// sprite normally has. It only sizes the list up front, and is held to what
+/// the payload could contain and the budget would allow, so a hostile header
+/// cannot make this allocate.
+fn sprite(payload: &[u8], expected_frames: i32, budget: &Budget) -> Result<Sprite> {
     budget.spend()?;
+    let capacity = usize::try_from(expected_frames)
+        .unwrap_or(0)
+        .min(payload.len() / MIN_FRAME_BYTES)
+        .min(budget.remaining());
     // These decoders run once per frame of every sprite, so they fill one
     // local value in place rather than rebuilding it for each field.
-    let mut sprite = Sprite::default();
-    for field in wire::fields(payload) {
+    let mut sprite = Sprite {
+        frames: Vec::with_capacity(capacity),
+        ..Sprite::default()
+    };
+    for field in wire::values(payload) {
         let field = field?;
         match field.number {
             1 => sprite.image_key = field.str()?.to_owned(),
-            2 => sprite.frames.push(frame(field.bytes()?, budget)?),
+            2 => {
+                // Decoded where it will live: a frame is too big to move around.
+                sprite.frames.push(Frame::default());
+                if let Some(slot) = sprite.frames.last_mut() {
+                    frame(slot, field.bytes()?, budget)?;
+                }
+            }
             3 => sprite.matte_key = field.str()?.to_owned(),
             _ => {}
         }
@@ -135,10 +159,9 @@ fn sprite(payload: &[u8], budget: &Budget) -> Result<Sprite> {
     Ok(sprite)
 }
 
-fn frame(payload: &[u8], budget: &Budget) -> Result<Frame> {
+fn frame(frame: &mut Frame, payload: &[u8], budget: &Budget) -> Result<()> {
     budget.spend()?;
-    let mut frame = Frame::default();
-    for field in wire::fields(payload) {
+    for field in wire::values(payload) {
         let field = field?;
         match field.number {
             1 => frame.alpha = field.f32()?,
@@ -151,12 +174,12 @@ fn frame(payload: &[u8], budget: &Budget) -> Result<Frame> {
             _ => {}
         }
     }
-    Ok(frame)
+    Ok(())
 }
 
 fn layout(initial: Layout, payload: &[u8]) -> Result<Layout> {
     let mut layout = initial;
-    for field in wire::fields(payload) {
+    for field in wire::values(payload) {
         let field = field?;
         match field.number {
             1 => layout.x = field.f32()?,
@@ -173,7 +196,7 @@ fn layout(initial: Layout, payload: &[u8]) -> Result<Layout> {
 /// protobuf omits zero-valued floats, so `{a: 1, d: 1}` stores only two fields.
 pub(super) fn transform(initial: Option<Transform>, payload: &[u8]) -> Result<Transform> {
     let mut matrix = initial.unwrap_or_default();
-    for field in wire::fields(payload) {
+    for field in wire::values(payload) {
         let field = field?;
         match field.number {
             1 => matrix.a = field.f32()?,

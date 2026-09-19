@@ -170,6 +170,36 @@ fn malformed_input_is_rejected_without_panicking() {
 }
 
 #[test]
+fn trailing_bytes_of_any_length_are_detected() {
+    // Short enough to hide in a decoder's lookahead, and longer.
+    let payloads = [proto(), Vec::new(), field(99, &vec![7; 100_000]), header()];
+    for payload in payloads {
+        let whole = pack(&payload);
+        assert_eq!(Document::from_bytes(&whole).unwrap().to_proto(), payload);
+        for extra in 1..=20 {
+            for filler in [0x00, 0xff, 0x78] {
+                let padded = [whole.clone(), vec![filler; extra]].concat();
+                let expected = (ErrorKind::Malformed, "svga_trailing_bytes");
+                assert_eq!(code(Document::from_bytes(&padded)), expected, "{extra}");
+            }
+        }
+        // A second complete stream after the first is trailing data too.
+        let doubled = [whole.clone(), whole.clone()].concat();
+        assert_eq!(
+            code(Document::from_bytes(&doubled)).1,
+            "svga_trailing_bytes"
+        );
+        // A wrong checksum is corruption, not success.
+        let mut damaged = whole.clone();
+        *damaged.last_mut().unwrap() ^= 1;
+        assert_eq!(
+            code(Document::from_bytes(&damaged)).1,
+            "svga_corrupt_zlib_stream"
+        );
+    }
+}
+
+#[test]
 fn every_prefix_of_a_payload_is_handled_without_panicking() {
     let whole = proto();
     for length in 0..whole.len() {

@@ -250,6 +250,31 @@ fn invalid_nested_data_is_reported_not_guessed() {
 }
 
 #[test]
+fn the_header_frame_count_only_hints_and_cannot_force_an_allocation() {
+    let sprite = field(4, &[field(2, &[]), field(2, &[])].concat());
+    for frames in [i32::MAX, -1, 0, 2] {
+        let params = field(2, &int32(4, frames));
+        let proto = [params, sprite.clone()].concat();
+        let movie = Document::from_proto(proto).unwrap().movie().unwrap();
+        assert_eq!(movie.sprites[0].frames.len(), 2);
+        // Never more than the sprite's own bytes could hold, whatever the header says.
+        assert!(movie.sprites[0].frames.capacity() <= 4, "{frames}");
+    }
+    // Nor more than the budget allows.
+    let params = field(2, &int32(4, 1000));
+    let frames: Vec<u8> = (0..1000).flat_map(|_| field(2, &[])).collect();
+    let document = Document::from_proto([params, field(4, &frames)].concat()).unwrap();
+    let error = document
+        .movie_with(&Limits::default().with_max_elements(10))
+        .unwrap_err();
+    assert_eq!(error.code(), "svga_too_many_elements");
+    // A sprite stored before the params simply gets no hint.
+    let early = [sprite.clone(), field(2, &int32(4, 2))].concat();
+    let movie = Document::from_proto(early).unwrap().movie().unwrap();
+    assert_eq!((movie.sprites[0].frames.len(), movie.params.frames), (2, 2));
+}
+
+#[test]
 fn the_element_budget_bounds_the_typed_view() {
     // Two images, one sprite with two frames: five elements.
     let document = Document::from_proto(proto()).unwrap();

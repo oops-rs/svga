@@ -84,6 +84,17 @@ fn unmodified_files_re_encode_to_the_same_payload() {
             "{name}: identity edit changed bytes"
         );
         assert!(Document::from_proto(proto).is_ok());
+        for extra in [1, 7, 8, 17] {
+            let padded = [original.clone(), vec![0; extra]].concat();
+            let error = Document::from_bytes(&padded).unwrap_err();
+            assert_eq!(error.code(), "svga_trailing_bytes", "{name}: +{extra}");
+        }
+        let error = Document::from_bytes(&original[..original.len() - 1]).unwrap_err();
+        assert_eq!(
+            error.code(),
+            "svga_corrupt_zlib_stream",
+            "{name}: truncated"
+        );
     }
     println!("{zlib} zlib files byte-identical, {zip} zip files read");
 }

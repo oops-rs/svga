@@ -1,6 +1,6 @@
 [package]
 name = "svga"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2024"
 rust-version = "1.89"
 description = "Decode, inspect and losslessly edit SVGA animation files. A codec, not a renderer."
@@ -16,14 +16,19 @@ exclude = ["/.github"]
 [features]
 default = ["zip"]
 # Read zip containers: SVGA 1.x (`movie.spec` JSON) and zipped 2.x (`movie.binary`).
-zip = ["dep:zip", "dep:serde_json"]
+zip = ["dep:zip", "dep:serde_json", "dep:flate2"]
 # Maximum-effort compression through libdeflate (C). Off by default so the
 # crate stays pure Rust.
 libdeflate = ["dep:libdeflater"]
 
 [dependencies]
-flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
+# Inflate. About 20% faster than miniz_oxide on SVGA payloads, which are
+# mostly PNG data; miniz_oxide below is only used to compress.
+fdeflate = "0.3.7"
+# Only selects the pure-Rust backend for the `zip` crate.
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"], optional = true }
 libdeflater = { version = "1.26", optional = true }
+miniz_oxide = { version = "0.9", default-features = false, features = ["with-alloc"] }
 serde_json = { version = "1", optional = true }
 thiserror = "2.0"
 zip = { version = "8", default-features = false, features = ["deflate-flate2"], optional = true }

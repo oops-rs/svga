@@ -18,7 +18,7 @@ use crate::{
     movie::decode,
     wire::{self, Field, LENGTH_DELIMITED},
 };
-use part::Part;
+use part::{Buffer, Part};
 use std::sync::Arc;
 
 pub(crate) const VERSION: u32 = 1;
@@ -47,7 +47,8 @@ impl Document {
     }
 
     pub fn from_bytes_with(bytes: &[u8], limits: &Limits) -> Result<Self> {
-        Self::from_proto_with(container::inflate(bytes, limits)?, limits)
+        let inflated = container::inflate(bytes, limits)?;
+        Self::from_buffer(Buffer::Vec(Arc::new(inflated)), limits)
     }
 
     /// Read an uncompressed protobuf `MovieEntity`.
@@ -56,7 +57,10 @@ impl Document {
     }
 
     pub fn from_proto_with(proto: impl Into<Arc<[u8]>>, limits: &Limits) -> Result<Self> {
-        let buffer: Arc<[u8]> = proto.into();
+        Self::from_buffer(Buffer::Slice(proto.into()), limits)
+    }
+
+    fn from_buffer(buffer: Buffer, limits: &Limits) -> Result<Self> {
         if buffer.len() > limits.max_inflated_bytes {
             return Err(Error::limit("svga_inflated_size_exceeds_limit"));
         }
