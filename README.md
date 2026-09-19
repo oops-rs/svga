@@ -60,6 +60,9 @@ std::fs::write("gift.min.svga", edited.to_bytes(Compression::Best)?)?;
 
 Edits return a new `Document` and leave the original alone; untouched fields
 share their bytes, so this is cheap.
+`replace_image_at` and `remove_image_at` address
+an entry by its position in `images()`, which also reaches repeated keys and
+keys that are not valid UTF-8.
 
 `cargo run --example inspect -- file.svga` prints a summary of any file.
 

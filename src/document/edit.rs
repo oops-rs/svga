@@ -12,6 +12,7 @@ use crate::{
 const KEY_NOT_FOUND: Error = Error::invalid_edit("svga_image_key_not_found");
 const KEY_AMBIGUOUS: Error = Error::invalid_edit("svga_image_key_ambiguous");
 const KEY_EXISTS: Error = Error::invalid_edit("svga_image_key_exists");
+const INDEX_OUT_OF_RANGE: Error = Error::invalid_edit("svga_image_index_out_of_range");
 
 impl Document {
     /// Index of the single part storing `key`. A repeated key is refused
@@ -28,15 +29,22 @@ impl Document {
         Ok(index)
     }
 
+    /// Index of the part holding the `entry`-th item of [`Document::images`].
+    fn entry_position(&self, entry: usize) -> Result<usize> {
+        let mut images = self.parts.iter().enumerate();
+        images
+            .by_ref()
+            .filter(|(_, part)| part.image().is_some())
+            .nth(entry)
+            .map(|(index, _)| index)
+            .ok_or(INDEX_OUT_OF_RANGE)
+    }
+
     fn with_parts(&self, parts: Vec<Part>) -> Self {
         Self { parts }
     }
 
-    /// Replace the value stored under `key`. The key field, any unknown entry
-    /// fields and the entry's position are kept as stored.
-    #[must_use = "edits return a new document"]
-    pub fn replace_image(&self, key: &str, value: &[u8]) -> Result<Self> {
-        let index = self.position(key)?;
+    fn with_value_at(&self, index: usize, value: &[u8]) -> Result<Self> {
         let mut parts = self.parts.clone();
         if let Some(slot) = parts.get_mut(index) {
             let entry = part::entry_with_value(slot.field().payload, value)?;
@@ -45,18 +53,38 @@ impl Document {
         Ok(self.with_parts(parts))
     }
 
+    fn without_part(&self, index: usize) -> Self {
+        let kept = self.parts.iter().enumerate();
+        let kept = kept.filter(|(position, _)| *position != index);
+        self.with_parts(kept.map(|(_, part)| part.clone()).collect())
+    }
+
+    /// Replace the value stored under `key`. The key field, any unknown entry
+    /// fields and the entry's position are kept as stored.
+    #[must_use = "edits return a new document"]
+    pub fn replace_image(&self, key: &str, value: &[u8]) -> Result<Self> {
+        self.with_value_at(self.position(key)?, value)
+    }
+
     /// Remove the entry stored under `key`.
     #[must_use = "edits return a new document"]
     pub fn remove_image(&self, key: &str) -> Result<Self> {
-        let index = self.position(key)?;
-        let parts = self
-            .parts
-            .iter()
-            .enumerate()
-            .filter(|(position, _)| *position != index)
-            .map(|(_, part)| part.clone())
-            .collect();
-        Ok(self.with_parts(parts))
+        Ok(self.without_part(self.position(key)?))
+    }
+
+    /// [`Document::replace_image`] addressed by position in
+    /// [`Document::images`] instead of by key. This reaches entries a key
+    /// cannot name: repeated keys, and keys that are not valid UTF-8.
+    #[must_use = "edits return a new document"]
+    pub fn replace_image_at(&self, entry: usize, value: &[u8]) -> Result<Self> {
+        self.with_value_at(self.entry_position(entry)?, value)
+    }
+
+    /// [`Document::remove_image`] addressed by position in
+    /// [`Document::images`]. Later entries move up by one.
+    #[must_use = "edits return a new document"]
+    pub fn remove_image_at(&self, entry: usize) -> Result<Self> {
+        Ok(self.without_part(self.entry_position(entry)?))
     }
 
     /// Every entry whose value is a file name that `resolve` knows, with the

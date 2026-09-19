@@ -38,7 +38,7 @@ pub mod wire;
 
 pub use archive::{Animation, Format};
 pub use container::{Compression, Container};
-pub use document::{Document, ImageEntry, ValueKind, is_animated_png};
+pub use document::{Document, ImageEntry, ValueKind, is_animated_png, png_dimensions};
 pub use error::{Error, ErrorKind, Result};
 pub use limits::Limits;
 pub use movie::Movie;

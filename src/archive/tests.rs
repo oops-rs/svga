@@ -80,6 +80,9 @@ fn svga_1x_is_read_into_the_same_model() {
     assert_eq!(images, expected);
     assert_eq!(animation.image("chest"), Some(&png(1)[..]));
     assert_eq!(animation.image("lost"), None);
+    assert_eq!(animation.image_kind("chest"), Some(ValueKind::Png));
+    assert_eq!(animation.image_kind("lost"), None);
+    assert_eq!(animation.clone().into_movie(), *animation.movie());
     let frames = &movie.sprites[0].frames;
     assert_eq!(frames[0].layout.y, 1.0);
     assert_eq!(frames[0].transform.unwrap().a, 1.005);
@@ -138,6 +141,8 @@ fn zipped_2x_resolves_images_stored_next_to_the_movie() {
         assert_eq!(animation.document().unwrap().to_proto(), proto);
         assert_eq!(animation.image("img_0"), Some(&png(1)[..]));
         assert_eq!(animation.image("img_1"), Some(b"gone".as_slice()));
+        assert_eq!(animation.image_kind("img_0"), Some(ValueKind::Png));
+        assert_eq!(animation.image_kind("img_1"), Some(ValueKind::FileName));
         assert_eq!(animation.image("in"), Some(&png(3)[..]));
         assert_eq!(animation.image("absent"), None);
         let embedded = [

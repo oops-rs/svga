@@ -65,6 +65,39 @@ fn images_can_be_removed_and_inserted() {
 }
 
 #[test]
+fn entries_a_key_cannot_name_are_edited_by_position() {
+    let entry = |key: &[u8], value: &[u8]| field(3, &[field(1, key), field(2, value)].concat());
+    let proto = |first: &[u8], last: &[u8]| {
+        [
+            header(),
+            entry(&[0xff, 0xfe], first),
+            sprite("img_0", 1.0),
+            entry(b"dup", b"one"),
+            entry(b"dup", last),
+        ]
+        .concat()
+    };
+    let document = Document::from_proto(proto(b"old", b"two")).unwrap();
+    assert_eq!(document.images().next().unwrap().key(), None);
+    let edited = document.replace_image_at(0, b"new").unwrap();
+    let edited = edited.replace_image_at(2, b"three").unwrap();
+    assert_eq!(edited.to_proto(), proto(b"new", b"three"));
+    let removed = edited.remove_image_at(1).unwrap();
+    let keys: Vec<_> = removed.images().map(|image| image.key_bytes()).collect();
+    assert_eq!(keys, [&[0xff, 0xfe][..], b"dup"]);
+    assert_eq!(removed.image("dup"), Some(b"three".as_slice()));
+    // Positions count image entries only, and the receiver is untouched.
+    assert_eq!(document.to_proto(), proto(b"old", b"two"));
+    for result in [
+        document.replace_image_at(3, b""),
+        document.remove_image_at(3),
+    ] {
+        let expected = (ErrorKind::InvalidEdit, "svga_image_index_out_of_range");
+        assert_eq!(code(result), expected);
+    }
+}
+
+#[test]
 fn edits_that_cannot_apply_are_refused() {
     let duplicated = movie_with(&[("img_0", png(1)), ("img_0", png(2))], &[]);
     let duplicated = Document::from_proto(duplicated).unwrap();

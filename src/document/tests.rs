@@ -76,6 +76,13 @@ fn animated_pngs_are_told_apart() {
     assert!(!is_animated_png(b"acTL"));
     let huge_chunk = [PNG_SIGNATURE, &[0xff; 8]].concat();
     assert!(!is_animated_png(&huge_chunk));
+    assert_eq!(png_dimensions(&still_png()), Some((256, 64)));
+    // Not a PNG, no IHDR first, or cut short inside the header.
+    assert_eq!(png_dimensions(&png(1)), None);
+    assert_eq!(png_dimensions(b"IHDR"), None);
+    let whole = still_png();
+    assert!((0..24).all(|length| png_dimensions(&whole[..length]).is_none()));
+    assert_eq!(ValueKind::sniff(&[0xff, 0xd8, 0xff, 0xe0]), ValueKind::Jpeg);
 }
 
 #[test]

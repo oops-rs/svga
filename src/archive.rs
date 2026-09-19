@@ -112,6 +112,19 @@ impl Animation {
         &self.movie
     }
 
+    /// The movie alone, releasing the file's images and buffers. Fetch what
+    /// you need through [`Animation::image`] first.
+    pub fn into_movie(self) -> Movie {
+        self.movie
+    }
+
+    /// What the bytes behind `key` look like, wherever this flavour keeps
+    /// them; see [`Animation::image`]. For a file name whose file is missing
+    /// this is [`ValueKind::FileName`].
+    pub fn image_kind(&self, key: &str) -> Option<ValueKind> {
+        self.image(key).map(ValueKind::sniff)
+    }
+
     /// The lossless document. `None` for SVGA 1.x, which has no protobuf.
     pub fn document(&self) -> Option<&Document> {
         self.document.as_ref()

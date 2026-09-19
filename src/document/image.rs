@@ -2,16 +2,29 @@
 use crate::wire::Field;
 
 const PNG_SIGNATURE: &[u8] = b"\x89PNG\r\n\x1a\n";
+const JPEG_SIGNATURE: &[u8] = &[0xff, 0xd8, 0xff];
+const PNG_HEADER: &[u8] = b"IHDR";
+const CHUNK_LENGTH_BYTES: usize = 4;
 const MAX_FILE_NAME_BYTES: usize = 255;
 const CANONICAL_ENTRY_FIELDS: usize = 2;
 
 /// What an `images` value looks like. Sniffed from the bytes; nothing is decoded.
+///
+/// This is a heuristic for listing and reporting, checked in the order of the
+/// variants: short text that happens to start with `ID3` reads as [`Mp3`], and
+/// an empty value is [`Unknown`] rather than a file name. Callers with a
+/// stricter notion of a file name should test the bytes themselves.
+///
+/// [`Mp3`]: ValueKind::Mp3
+/// [`Unknown`]: ValueKind::Unknown
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
 pub enum ValueKind {
     /// Starts with the PNG signature. May still be an APNG, see
     /// [`is_animated_png`].
     Png,
+    /// Starts with a JPEG start-of-image marker. Rare; some players accept it.
+    Jpeg,
     /// MP3 audio, referenced by an audio entity.
     Mp3,
     /// Short printable UTF-8: the name of a file shipped next to the movie.
@@ -23,6 +36,8 @@ impl ValueKind {
     pub fn sniff(value: &[u8]) -> Self {
         if value.starts_with(PNG_SIGNATURE) {
             Self::Png
+        } else if value.starts_with(JPEG_SIGNATURE) {
+            Self::Jpeg
         } else if is_mp3(value) {
             Self::Mp3
         } else if is_file_name(value) {
@@ -46,6 +61,15 @@ fn is_file_name(value: &[u8]) -> bool {
     !value.is_empty()
         && value.len() <= MAX_FILE_NAME_BYTES
         && std::str::from_utf8(value).is_ok_and(|name| !name.chars().any(char::is_control))
+}
+
+/// Pixel width and height from a PNG's header, without decoding anything.
+/// `None` when the bytes are not a PNG with a leading `IHDR` chunk.
+pub fn png_dimensions(png: &[u8]) -> Option<(u32, u32)> {
+    let header = png.strip_prefix(PNG_SIGNATURE)?.get(CHUNK_LENGTH_BYTES..)?;
+    let (width, rest) = header.strip_prefix(PNG_HEADER)?.split_first_chunk::<4>()?;
+    let (height, _) = rest.split_first_chunk::<4>()?;
+    Some((u32::from_be_bytes(*width), u32::from_be_bytes(*height)))
 }
 
 /// Whether a PNG declares animation. `acTL` must precede `IDAT`, so the walk

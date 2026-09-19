@@ -10,7 +10,7 @@ mod part;
 #[cfg(test)]
 mod tests;
 
-pub use image::{ImageEntry, ValueKind, is_animated_png};
+pub use image::{ImageEntry, ValueKind, is_animated_png, png_dimensions};
 
 use crate::{
     Compression, Limits, Movie, container,
@@ -38,6 +38,10 @@ pub struct Document {
 
 impl Document {
     /// Read an SVGA 2.x file: one zlib stream with nothing after it.
+    ///
+    /// The whole payload is walked up front, so a file that is malformed is
+    /// reported as such even if it also contains things a caller would refuse
+    /// on policy grounds (audio, unknown fields, an old version).
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         Self::from_bytes_with(bytes, &Limits::default())
     }

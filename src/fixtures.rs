@@ -32,7 +32,7 @@ pub fn animated_png() -> Vec<u8> {
 pub fn still_png() -> Vec<u8> {
     [
         PNG_SIGNATURE.to_vec(),
-        chunk(b"IHDR", &[0; 13]),
+        chunk(b"IHDR", &[0, 0, 1, 0, 0, 0, 0, 64, 8, 6, 0, 0, 0]),
         chunk(b"IDAT", &[0; 4]),
         chunk(b"acTL", &[0; 8]),
     ]
